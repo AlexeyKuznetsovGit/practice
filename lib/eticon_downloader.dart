@@ -29,27 +29,28 @@ class EticonDownloader {
       if (url.isEmpty) {
         throw EticonDownloadError(error: 'Url is empty');
       }
-      http.Response response = await http.get(Uri.parse(url));
-      if (response.statusCode >= 400) {
-        throw DownloadException(response.statusCode);
-      }
-      if (response.statusCode == 200) {
-        if (fileName.isEmpty) {
-          fileName = basename(url);
+      if (await _requestPermission(Permission.storage)) {
+        http.Response response = await http.get(Uri.parse(url));
+        if (response.statusCode.toString().startsWith('30')) {
+          throw DownloadException(response.statusCode);
         }
-        return await saveToDownloadDir(
-            bytes: response.bodyBytes,
-            fileName: fileName,
-            addTimestamp: addTimestamp);
-      }
-    } on DownloadException catch (error) {
-      if (error.code >= 400) {
-        throw EticonDownloadError(error: '$error');
+        if (response.statusCode >= 400) {
+          throw DownloadException(response.statusCode);
+        }
+        if (response.statusCode.toString().startsWith('20')) {
+          if (fileName.isEmpty) {
+            fileName = basename(url);
+          }
+          return await saveToDownloadDir(
+              bytes: response.bodyBytes,
+              fileName: fileName,
+              addTimestamp: addTimestamp);
+        }
       } else {
-        throw EticonDownloadError(
-            error: 'Problem download file, error: $error');
+        return false;
       }
-      return false;
+    } catch (error) {
+      throw EticonDownloadError(error: 'Problem download file, error: $error');
     }
     return true;
   }
@@ -91,37 +92,20 @@ class EticonDownloader {
           fileFormat == '.3gpp' ||
           fileFormat == '.mkv' ||
           fileFormat == '.flv') {
-        if (Platform.isAndroid) {
-          if (await _requestPermission(Permission.storage)) {
-            await GallerySaver.saveVideo(url);
-          } else {
-            return false;
-          }
-        } else {
-          if (await _requestPermission(Permission.photos)) {
-            await GallerySaver.saveVideo(url);
-          } else {
-            return false;
-          }
+        if (!(await _requestPermission(
+            Platform.isAndroid ? Permission.storage : Permission.photos))) {
+          return false;
         }
+        await GallerySaver.saveVideo(url);
       } else {
-        if (Platform.isAndroid) {
-          if (await _requestPermission(Permission.storage)) {
-            await GallerySaver.saveImage(url);
-          } else {
-            return false;
-          }
-        } else {
-          if (await _requestPermission(Permission.photos)) {
-            await GallerySaver.saveImage(url);
-          } else {
-            return false;
-          }
+        if (!(await _requestPermission(
+            Platform.isAndroid ? Permission.storage : Permission.photos))) {
+          return false;
         }
+        await GallerySaver.saveImage(url);
       }
     } catch (error) {
       throw EticonDownloadError(error: 'Media download problem, error: $error');
-      return false;
     }
     return true;
   }
@@ -139,36 +123,33 @@ class EticonDownloader {
             fileName.substring(indexOfExtr);
       }
       String savePath;
-      if (await _requestPermission(Permission.storage)) {
-        if (Platform.isIOS ||
-            (Platform.isAndroid &&
-                (await DeviceInfoPlugin().androidInfo).version.sdkInt! >= 29)) {
-          savePath =
-              '${(await path.getApplicationDocumentsDirectory()).path}/$fileName';
-        } else {
-          savePath = '${(await AndroidPathProvider.downloadsPath)}/$fileName';
-        }
-        if (savePath.isEmpty) {
-          throw EticonDownloadError(error: 'Path to save files is empty');
-        }
+      if (Platform.isIOS ||
+          (Platform.isAndroid &&
+              (await DeviceInfoPlugin().androidInfo).version.sdkInt! >= 29)) {
+        savePath =
+            '${(await path.getApplicationDocumentsDirectory()).path}/$fileName';
+      } else {
+        savePath = '${(await AndroidPathProvider.downloadsPath)}/$fileName';
+      }
+      if (savePath.isEmpty) {
+        throw EticonDownloadError(error: 'Path to save files is empty');
+      }
 
-        File(savePath)
-          ..createSync()
-          ..writeAsBytesSync(bytes);
-        if (Platform.isAndroid &&
-            (await DeviceInfoPlugin().androidInfo).version.sdkInt! >= 29) {
-          await _channel.invokeMethod('downloadFiles', {
-            "fileName": fileName,
-            "mime": mime(fileName),
-            "localPath": savePath
-          });
-          File(savePath).deleteSync();
-        }
+      File(savePath)
+        ..createSync()
+        ..writeAsBytesSync(bytes);
+      if (Platform.isAndroid &&
+          (await DeviceInfoPlugin().androidInfo).version.sdkInt! >= 29) {
+        await _channel.invokeMethod('downloadFiles', {
+          "fileName": fileName,
+          "mime": mime(fileName),
+          "localPath": savePath
+        });
+        File(savePath).deleteSync();
       }
     } catch (error) {
       throw EticonDownloadError(
           error: 'Problem with saving to downloads directory, error: $error');
-      return false;
     }
     return true;
   }
